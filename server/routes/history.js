@@ -1,59 +1,55 @@
 const express = require('express');
-const db = require('../db');
+const pool = require('../db');
 
 const router = express.Router();
 
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const history = db
-        .prepare(`
-            SELECT history.id, history.club_id, history.distance, history.date, clubs.name AS club_name
-            FROM history
-            JOIN clubs ON history.club_id = clubs.id
-            ORDER BY history.date ASC, history.id ASC
-        `)
-        .all();
-    res.json(history);
+    const { rows } = await pool.query(`
+      SELECT history.id, history.club_id, history.distance, history.date, clubs.name AS club_name
+      FROM history
+      JOIN clubs ON history.club_id = clubs.id
+      ORDER BY history.date ASC, history.id ASC
+    `);
+    res.json(rows);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: '履歴一覧の取得に失敗しました' });
   }
 });
 
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const { clubId, distance, date } = req.body;
 
   if (!clubId || distance == null || !date) {
     return res.status(400).json({ error: 'clubId, distance, dateは必須です' });
   }
 
-  const club = db.prepare('SELECT * FROM clubs WHERE id = ?').get(clubId);
-  if (!club) {
-    return res.status(400).json({ error: '指定されたclubIdのクラブが存在しません' });
-  }
-
   try {
-    const result = db
-      .prepare('INSERT INTO history (club_id, distance, date) VALUES (?, ?, ?)')
-      .run(clubId, distance, date);
-    const newEntry = db.prepare('SELECT * FROM history WHERE id = ?').get(result.lastInsertRowid);
-    res.status(201).json(newEntry);
+    const clubResult = await pool.query('SELECT * FROM clubs WHERE id = $1', [clubId]);
+    if (clubResult.rows.length === 0) {
+      return res.status(400).json({ error: '指定されたclubIdのクラブが存在しません' });
+    }
+
+    const { rows } = await pool.query(
+      'INSERT INTO history (club_id, distance, date) VALUES ($1, $2, $3) RETURNING *',
+      [clubId, distance, date]
+    );
+    res.status(201).json(rows[0]);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: '履歴の登録に失敗しました' });
   }
 });
 
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   const { id } = req.params;
 
   try {
-    const existing = db.prepare('SELECT * FROM history WHERE id = ?').get(id);
-    if (!existing) {
+    const { rows } = await pool.query('DELETE FROM history WHERE id = $1 RETURNING *', [id]);
+    if (rows.length === 0) {
       return res.status(404).json({ error: '指定された履歴が見つかりません' });
     }
-
-    db.prepare('DELETE FROM history WHERE id = ?').run(id);
     res.status(204).send();
   } catch (err) {
     console.error(err);

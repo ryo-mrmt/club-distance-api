@@ -1,19 +1,19 @@
 const express = require('express');
-const db = require('../db');
+const pool = require('../db');
 
 const router = express.Router();
 
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const clubs = db.prepare('SELECT * FROM clubs ORDER BY id').all();
-    res.json(clubs);
+    const { rows } = await pool.query('SELECT * FROM clubs ORDER BY id');
+    res.json(rows);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'クラブ一覧の取得に失敗しました' });
   }
 });
 
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const { name, loft } = req.body;
 
   if (!name || typeof name !== 'string') {
@@ -21,51 +21,47 @@ router.post('/', (req, res) => {
   }
 
   try {
-    const result = db
-      .prepare('INSERT INTO clubs (name, loft) VALUES (?, ?)')
-      .run(name, loft ?? null);
-    const newClub = db.prepare('SELECT * FROM clubs WHERE id = ?').get(result.lastInsertRowid);
-    res.status(201).json(newClub);
+    const { rows } = await pool.query(
+      'INSERT INTO clubs (name, loft) VALUES ($1, $2) RETURNING *',
+      [name, loft ?? null]
+    );
+    res.status(201).json(rows[0]);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'クラブの登録に失敗しました' });
   }
 });
 
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   const { id } = req.params;
   const { name, loft } = req.body;
 
   try {
-    const existing = db.prepare('SELECT * FROM clubs WHERE id = ?').get(id);
+    const existingResult = await pool.query('SELECT * FROM clubs WHERE id = $1', [id]);
+    const existing = existingResult.rows[0];
     if (!existing) {
       return res.status(404).json({ error: '指定されたクラブが見つかりません' });
     }
 
-    db.prepare('UPDATE clubs SET name = ?, loft = ? WHERE id = ?').run(
-      name ?? existing.name,
-      loft ?? existing.loft,
-      id
+    const { rows } = await pool.query(
+      'UPDATE clubs SET name = $1, loft = $2 WHERE id = $3 RETURNING *',
+      [name ?? existing.name, loft ?? existing.loft, id]
     );
-
-    const updated = db.prepare('SELECT * FROM clubs WHERE id = ?').get(id);
-    res.json(updated);
+    res.json(rows[0]);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'クラブの更新に失敗しました' });
   }
 });
 
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   const { id } = req.params;
 
   try {
-    const existing = db.prepare('SELECT * FROM clubs WHERE id = ?').get(id);
-    if (!existing) {
+    const { rows } = await pool.query('DELETE FROM clubs WHERE id = $1 RETURNING *', [id]);
+    if (rows.length === 0) {
       return res.status(404).json({ error: '指定されたクラブが見つかりません' });
     }
-
-    db.prepare('DELETE FROM clubs WHERE id = ?').run(id);
     res.status(204).send();
   } catch (err) {
     console.error(err);
